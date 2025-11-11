@@ -84,14 +84,16 @@
 ### 後端環境變數
 | 變數 | 用途 | 預設 |
 |------|------|------|
+| `DJANGO_SECRET_KEY` | Django 的 SECRET_KEY，正式環境務必覆寫 | `insecure-dev-secret` (docker 預設) |
 | `DJANGO_DEBUG` | 是否開啟除錯模式 | `False` |
-| `DJANGO_ALLOWED_HOSTS` | 逗號分隔白名單 | 空 (僅限 localhost) |
+| `DJANGO_ALLOWED_HOSTS` | 逗號分隔白名單 | 空 (本地) / `localhost,backend` (docker 預設) |
 | `CAMERA_URL` | `GET /stream/` 的預設來源 | – |
 | `CAM_OPEN_RETRY` | 重新連線攝影機的間隔秒數 | `2` |
 | `CAM_OPEN_TEST_TIMEOUT` | 新串流建立前的測試逾時 | `8` |
 | `CAM_STREAM_LOCK_WAIT` | 切換來源時鎖等待秒數 | `5` |
 | `CAM_FRAME_INTERVAL` | 影格間隔秒數 (>0 時可節流) | `0` |
 | `CAM_CLIENT_ACK_TIMEOUT` | 前端 heartbeat 逾時秒數 (<=0 停用) | `15` |
+| `RUN_MIGRATIONS` | docker-entrypoint 是否於啟動時自動 `migrate` | `true` |
 
 ### 前端環境變數
 - `VITE_API_BASE_URL`：預設 `''` (透過 Vite 代理)。部署時應設定為後端公開網址。
@@ -109,14 +111,16 @@
 ## 8. Docker 流程
 以 docker-compose 同步啟動 Django API 與已建置的 React 靜態站：
 1. (可選) 在專案根目錄建立 `.env`，覆寫：
+   - `DJANGO_SECRET_KEY` (必填於正式環境，預設僅供本機測試)
    - `BACKEND_PORT` (預設 `8000`)
    - `FRONTEND_PORT` (預設 `4173`)
    - `VITE_API_BASE_URL` (build 時寫入前端，預設 `http://localhost:${BACKEND_PORT:-8000}`，務必填入瀏覽器可解析的完整 URL)
+   - `RUN_MIGRATIONS` (若不想啟動時自動 `migrate` 可設為 `false`)
    - 其他 `DJANGO_*` 與 `CAMERA_*` 相關設定
 2. `docker compose build`
 3. `docker compose up -d` → 前端 `http://localhost:4173`，API `http://localhost:8000`
 4. 結束：`docker compose down`
-> 後端容器啟動時會自動 `python manage.py migrate`；如需持久化 SQLite 請自備 volume。
+> 後端容器以 gunicorn 提供 API，並透過 `curl /healthz/` 健康檢查讓前端等待後端就緒；`RUN_MIGRATIONS=false` 可跳過啟動時的 migrate。持久化 SQLite 請改用 volume。
 
 ## 9. 測試與品質
 - 後端：`python manage.py test`
