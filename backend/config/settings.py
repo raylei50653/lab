@@ -62,10 +62,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+db_path = os.getenv("DJANGO_DB_PATH")
+if db_path:
+    db_path = Path(db_path)
+    if not db_path.is_absolute():
+        db_path = BASE_DIR / db_path
+else:
+    db_path = BASE_DIR / 'db.sqlite3'
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': db_path,
     }
 }
 
