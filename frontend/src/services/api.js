@@ -6,8 +6,8 @@ export const api = {
   // /data/ CRUD
   listData: () => get('/data/'),
   getData: (id) => get(`/data/${id}/`),
-  createData: (content) => post('/data/', { json: { content } }),
-  updateData: (id, content) => put(`/data/${id}/`, { json: { content } }),
-  patchData: (id, content) => patch(`/data/${id}/`, { json: { content } }),
+  createData: (text) => post('/data/', { json: { text } }),
+  updateData: (id, text) => put(`/data/${id}/`, { json: { text } }),
+  patchData: (id, text) => patch(`/data/${id}/`, { json: { text } }),
   deleteData: (id) => del(`/data/${id}/`),
 }

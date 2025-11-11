@@ -19,13 +19,13 @@ export function useData(autoLoad = true) {
     }
   }, [])
 
-  const createItem = useCallback(async (content) => {
-    await api.createData(content)
+  const createItem = useCallback(async (text) => {
+    await api.createData(text)
     await refresh()
   }, [refresh])
 
-  const updateItem = useCallback(async (id, content) => {
-    await api.updateData(id, content)
+  const updateItem = useCallback(async (id, text) => {
+    await api.updateData(id, text)
     await refresh()
   }, [refresh])
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)) }
 function buildQuery(params) {
@@ -29,6 +29,13 @@ export default function Camera() {
   const apiBase = import.meta.env.VITE_API_BASE_URL
     ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
     : '/api'
+  const controlUrl = `${apiBase}/stream/control/`
+  const clientIdRef = useRef(
+    (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`
+  )
+  const clientId = clientIdRef.current
 
   // 用 key 讓 <img> 在參數變動時確實重建
   const [reloadKey, setReloadKey] = useState(0)
@@ -42,10 +49,31 @@ export default function Camera() {
       gray: gray ? 1 : undefined,
       width: w,
       url: url || undefined,
-      t: Date.now(), // 破壞快取，確保重連
+      client: clientId,
+      t: reloadKey, // 破壞快取，確保重連
     })
     return `${apiBase}/stream/${q ? `?${q}` : ''}`
-  }, [apiBase, gray, width, url, paused, reloadKey])
+  }, [apiBase, gray, width, url, paused, reloadKey, clientId])
+
+  const sendControl = useCallback((action, opts = {}) => {
+    if (!clientId) return
+    const payload = JSON.stringify({ action, client: clientId })
+    if (opts.beacon && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      try {
+        const blob = new Blob([payload], { type: 'application/json' })
+        navigator.sendBeacon(controlUrl, blob)
+        return
+      } catch (err) {
+        // fall through to fetch
+      }
+    }
+    fetch(controlUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true,
+    }).catch(() => {})
+  }, [clientId, controlUrl])
 
   // 輸入提示：URL 不是 http/rtsp
   useEffect(() => {
@@ -69,6 +97,31 @@ export default function Camera() {
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src])
+
+  useEffect(() => {
+    if (!isActive) return
+    const send = () => sendControl('ack')
+    send()
+    const timer = setInterval(send, 5000)
+    return () => clearInterval(timer)
+  }, [isActive, sendControl])
+
+  const prevActiveRef = useRef(false)
+  useEffect(() => {
+    if (prevActiveRef.current && !isActive) {
+      sendControl('stop')
+    }
+    prevActiveRef.current = isActive
+  }, [isActive, sendControl])
+
+  useEffect(() => {
+    const handleUnload = () => sendControl('stop', { beacon: true })
+    window.addEventListener('beforeunload', handleUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload)
+      sendControl('stop')
+    }
+  }, [sendControl])
 
   const handleApplySource = () => {
     const next = inputUrl.trim()
@@ -170,9 +223,13 @@ export default function Camera() {
             src={src}
             alt="stream"
             style={{ maxWidth: '100%', border: '1px solid #ddd' }}
-            onLoad={() => setStatus('LIVE')}
+            onLoad={() => {
+              setStatus('LIVE')
+              sendControl('ack')
+            }}
             onError={(e) => {
               setStatus('ERROR')
+              sendControl('stop')
               e.currentTarget.alt = '串流連線失敗（檢查 CAMERA_URL / url 參數 / 後端日誌）'
             }}
           />

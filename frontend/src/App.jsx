@@ -1,5 +1,6 @@
-import { Link, Route, Routes, useLocation } from 'react-router-dom'
-import Home from './pages/Home'
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import Health from './pages/Health'
+import DataCrud from './pages/DataCrud'
 import Camera from './pages/Camera'
 
 export default function App() {
@@ -16,11 +17,14 @@ export default function App() {
     <div style={{ maxWidth: 960, margin: '0 auto', padding: 16 }}>
       <h1>React × Django Demo</h1>
       <nav style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-        <Tab to="/">Home</Tab>
+        <Tab to="/health">Health Check</Tab>
+        <Tab to="/data">Data CRUD</Tab>
         <Tab to="/camera">Camera</Tab>
       </nav>
       <Routes>
-        <Route path="/" element={<Home/>} />
+        <Route path="/" element={<Navigate to="/health" replace />} />
+        <Route path="/health" element={<Health />} />
+        <Route path="/data" element={<DataCrud />} />
         <Route path="/camera" element={<Camera/>} />
       </Routes>
     </div>
