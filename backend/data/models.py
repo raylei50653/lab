@@ -1,7 +1,7 @@
 from django.db import models
 
 class Data(models.Model):
-    content = models.JSONField()
+    text = models.CharField(max_length=1024, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

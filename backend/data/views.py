@@ -12,7 +12,7 @@ def _json_error(status, message, extra=None):
         payload.update(extra)
     return JsonResponse(payload, status=status)
 
-def _parse_json_body(request, *, required_key="content", must_be_object=True):
+def _parse_json_body(request, *, required_key="text"):
     raw = request.body or b""
     if len(raw) > JSON_MAX_BYTES:
         raise ValueError(f"body too large (>{JSON_MAX_BYTES} bytes)")
@@ -25,11 +25,11 @@ def _parse_json_body(request, *, required_key="content", must_be_object=True):
     if required_key not in data:
         raise ValueError(f"missing field: {required_key}")
 
-    content = data[required_key]
-    if must_be_object and not isinstance(content, dict):
-        raise ValueError("content must be a JSON object")
+    value = data[required_key]
+    if not isinstance(value, str):
+        raise ValueError(f"{required_key} must be a string")
 
-    return content
+    return value.strip()
 
 def _options_ok():
     # 同源代理下其實用不到，但保留不會有壞處
@@ -43,16 +43,21 @@ def data_collection(request):
         return _options_ok()
 
     if request.method == "GET":
-        items = list(Data.objects.values("id", "content"))
+        items = list(Data.objects.values("id", "text", "created_at", "updated_at"))
         return JsonResponse(items, safe=False, status=200)
 
     if request.method == "POST":
         try:
-            content = _parse_json_body(request)
+            text = _parse_json_body(request)
         except ValueError as e:
             return _json_error(400, str(e))
-        obj = Data.objects.create(content=content)
-        return JsonResponse({"id": obj.id, "content": obj.content}, status=201)
+        obj = Data.objects.create(text=text)
+        return JsonResponse({
+            "id": obj.id,
+            "text": obj.text,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+        }, status=201)
 
     return HttpResponseNotAllowed(["GET", "POST", "OPTIONS"])
 
@@ -64,17 +69,26 @@ def data_detail(request, pk: int):
     obj = get_object_or_404(Data, pk=pk)
 
     if request.method == "GET":
-        return JsonResponse({"id": obj.id, "content": obj.content}, status=200)
+        return JsonResponse({
+            "id": obj.id,
+            "text": obj.text,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+        }, status=200)
 
     if request.method in ("PUT", "PATCH"):
         try:
-            content = _parse_json_body(request)
+            text = _parse_json_body(request)
         except ValueError as e:
             return _json_error(400, str(e))
-        # 這裡 PUT/PATCH 都採「覆寫」策略；若想 PATCH 部分合併，可改成 dict 合併
-        obj.content = content
-        obj.save(update_fields=["content"])
-        return JsonResponse({"id": obj.id, "content": obj.content}, status=200)
+        obj.text = text
+        obj.save(update_fields=["text", "updated_at"])
+        return JsonResponse({
+            "id": obj.id,
+            "text": obj.text,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+        }, status=200)
 
     if request.method == "DELETE":
         obj.delete()
