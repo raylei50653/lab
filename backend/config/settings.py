@@ -14,11 +14,17 @@ if not SECRET_KEY:
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
 
-# 允許前端開發代理的來源通過 CSRF 檢查
-CSRF_TRUSTED_ORIGINS = [
+# 允許前端開發代理與部署來源通過 CSRF 檢查
+default_csrf_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+extra_csrf_origins = [
+    origin.strip()
+    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS = default_csrf_origins + extra_csrf_origins
 
 
 INSTALLED_APPS = [

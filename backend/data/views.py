@@ -19,8 +19,10 @@ def _parse_json_body(request, *, required_key="text"):
 
     try:
         data = json.loads(raw.decode("utf-8") if raw else "{}")
+    except UnicodeDecodeError as e:
+        raise ValueError("無效的 UTF-8") from e
     except json.JSONDecodeError as e:
-        raise ValueError(f"invalid JSON: {str(e)}")
+        raise ValueError(f"invalid JSON: {str(e)}") from e
 
     if required_key not in data:
         raise ValueError(f"missing field: {required_key}")

@@ -6,15 +6,19 @@ export default function DataForm({ onSubmit, initial }) {
     setText(initial?.text ?? '')
   }, [initial])
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     const trimmed = text.trim()
     if (!trimmed) {
       alert('請輸入內容')
       return
     }
-    onSubmit(trimmed)
-    setText('')
+    try {
+      await onSubmit(trimmed)
+      setText('')
+    } catch (err) {
+      console.error('Create failed', err)
+    }
   }
 
   return (

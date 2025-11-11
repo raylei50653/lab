@@ -6,6 +6,16 @@ export function useData(autoLoad = true) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const runMutation = useCallback(async (fn, fallbackMessage = 'Operation failed') => {
+    try {
+      setError('')
+      await fn()
+    } catch (err) {
+      setError(err?.message || fallbackMessage)
+      throw err
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
@@ -20,19 +30,25 @@ export function useData(autoLoad = true) {
   }, [])
 
   const createItem = useCallback(async (text) => {
-    await api.createData(text)
-    await refresh()
-  }, [refresh])
+    await runMutation(async () => {
+      await api.createData(text)
+      await refresh()
+    }, 'Create failed')
+  }, [refresh, runMutation])
 
   const updateItem = useCallback(async (id, text) => {
-    await api.updateData(id, text)
-    await refresh()
-  }, [refresh])
+    await runMutation(async () => {
+      await api.updateData(id, text)
+      await refresh()
+    }, 'Update failed')
+  }, [refresh, runMutation])
 
   const deleteItem = useCallback(async (id) => {
-    await api.deleteData(id)
-    await refresh()
-  }, [refresh])
+    await runMutation(async () => {
+      await api.deleteData(id)
+      await refresh()
+    }, 'Delete failed')
+  }, [refresh, runMutation])
 
   useEffect(() => {
     if (autoLoad) refresh()

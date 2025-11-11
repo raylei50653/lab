@@ -1,25 +1,19 @@
 # camera/views.py
-import json
+import hashlib
 import os
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
+
 import cv2
 from django.http import StreamingHttpResponse, HttpResponse, JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-OPEN_RETRY_SEC = float(os.getenv("CAM_OPEN_RETRY", "2"))
 FRAME_INTERVAL = float(os.getenv("CAM_FRAME_INTERVAL", "0"))  # 例：0.05 ≈ 20fps
-STREAM_LOCK = threading.Lock()  # 確保同一時間只會有一個攝影機串流
-STREAM_STATE_LOCK = threading.Lock()
-CURRENT_STOP_EVENT = None
-CURRENT_CLIENT_ID = None
-CLIENT_LAST_ACK_AT = 0.0
-CURRENT_CLIENT_REQUIRES_ACK = False
-LOCK_WAIT_SEC = float(os.getenv("CAM_STREAM_LOCK_WAIT", "5"))
-OPEN_TEST_TIMEOUT = float(os.getenv("CAM_OPEN_TEST_TIMEOUT", "8"))
-CLIENT_ACK_TIMEOUT = float(os.getenv("CAM_CLIENT_ACK_TIMEOUT", "15"))  # 設 0 停用
+
 
 def _open_ip():
     """
@@ -29,110 +23,111 @@ def _open_ip():
     """
     return os.getenv("CAMERA_URL")
 
+
 def _open_capture(url: str):
     """
     優先使用 FFMPEG，若失敗則退回預設 (CAP_ANY) 以容忍不同的 OpenCV 編譯選項。
     """
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        cap = cv2.VideoCapture(url)
     if cap.isOpened():
-        return cap
-    cap.release()
-
-    cap = cv2.VideoCapture(url)
-    if cap.isOpened():
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
         return cap
     cap.release()
     return None
 
-def _open_capture_with_retry(url: str, timeout: float):
-    deadline = time.time() + timeout
-    while True:
-        cap = _open_capture(url)
-        if cap is not None:
-            return cap
-        remaining = deadline - time.time()
-        if remaining <= 0:
-            return None
-        time.sleep(min(OPEN_RETRY_SEC, max(remaining, 0)))
 
-def _signal_existing_stream_stop():
-    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT
-    with STREAM_STATE_LOCK:
-        if CURRENT_STOP_EVENT is not None:
-            CURRENT_STOP_EVENT.set()
-
-def _register_stream(stop_event: threading.Event, client_id: str, require_ack: bool):
-    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT, CURRENT_CLIENT_REQUIRES_ACK
-    with STREAM_STATE_LOCK:
-        CURRENT_STOP_EVENT = stop_event
-        CURRENT_CLIENT_ID = client_id
-        CLIENT_LAST_ACK_AT = time.time()
-        CURRENT_CLIENT_REQUIRES_ACK = require_ack
-
-def _clear_stream(stop_event: threading.Event):
-    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT, CURRENT_CLIENT_REQUIRES_ACK
-    with STREAM_STATE_LOCK:
-        if CURRENT_STOP_EVENT is stop_event:
-            CURRENT_STOP_EVENT = None
-            CURRENT_CLIENT_ID = None
-            CLIENT_LAST_ACK_AT = 0.0
-            CURRENT_CLIENT_REQUIRES_ACK = False
-
-def _touch_client_ack(client_id: str):
-    global CLIENT_LAST_ACK_AT
-    with STREAM_STATE_LOCK:
-        if not (CURRENT_CLIENT_ID and client_id == CURRENT_CLIENT_ID):
-            return False
-        CLIENT_LAST_ACK_AT = time.time()
-        return True
-
-def _stop_stream_for_client(client_id: str | None):
-    with STREAM_STATE_LOCK:
-        if CURRENT_STOP_EVENT is None:
-            return False
-        if CURRENT_CLIENT_ID and client_id and client_id != CURRENT_CLIENT_ID:
-            return False
-        CURRENT_STOP_EVENT.set()
-        return True
-
-def _client_ack_expired(stop_event: threading.Event):
-    if CLIENT_ACK_TIMEOUT <= 0:
+def _is_url_allowed(url: str | None) -> bool:
+    if not url:
         return False
-    with STREAM_STATE_LOCK:
-        if stop_event is not CURRENT_STOP_EVENT:
-            return False
-        if not CURRENT_CLIENT_ID or not CURRENT_CLIENT_REQUIRES_ACK:
-            return False
-        return (time.time() - CLIENT_LAST_ACK_AT) > CLIENT_ACK_TIMEOUT
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme in ("http", "https", "rtsp")
 
-def _gen_ip(url: str, to_gray=False, width=None, stop_event=None):
-    cap = None
-    last = 0.0
+
+_ACTIVE_STREAMS: dict[str, threading.Event] = {}
+_ACTIVE_STREAMS_LOCK = threading.Lock()
+
+
+def _register_stream_session(client_id: str | None):
+    if not client_id:
+        return None
+    event = threading.Event()
+    previous = None
+    with _ACTIVE_STREAMS_LOCK:
+        previous = _ACTIVE_STREAMS.get(client_id)
+        _ACTIVE_STREAMS[client_id] = event
+    if previous:
+        previous.set()
+    return event
+
+
+def _release_stream_session(client_id: str | None, token: threading.Event | None):
+    if not client_id or token is None:
+        return
+    with _ACTIVE_STREAMS_LOCK:
+        current = _ACTIVE_STREAMS.get(client_id)
+        if current is token:
+            _ACTIVE_STREAMS.pop(client_id, None)
+    token.set()
+
+
+def _abort_stream_session(client_id: str | None) -> bool:
+    if not client_id:
+        return False
+    with _ACTIVE_STREAMS_LOCK:
+        token = _ACTIVE_STREAMS.get(client_id)
+    if token:
+        token.set()
+        return True
+    return False
+
+
+def _iter_stream(
+    request,
+    url: str,
+    *,
+    to_gray: bool,
+    width: int | None,
+    client_id: str | None,
+    stop_token: threading.Event | None,
+):
+    cap = _open_capture(url)
+    if cap is None:
+        _release_stream_session(client_id, stop_token)
+        return
+    last_frame_ts = 0.0
+    check_aborted = getattr(request, "is_aborted", None)
+
+    def _request_disconnected() -> bool:
+        if callable(check_aborted):
+            try:
+                return bool(check_aborted())
+            except Exception:
+                return False
+        return False
+
     try:
         while True:
-            if stop_event is not None and stop_event.is_set():
+            if (stop_token and stop_token.is_set()) or _request_disconnected():
                 break
-            # 節流（可降低 CPU/頻寬）
             if FRAME_INTERVAL > 0:
                 now = time.time()
-                sleep = FRAME_INTERVAL - (now - last)
+                sleep = FRAME_INTERVAL - (now - last_frame_ts)
                 if sleep > 0:
                     time.sleep(sleep)
-                last = time.time()
-
-            # 確保連線
-            if cap is None:
-                cap = _open_capture(url)
-                if cap is None:
-                    time.sleep(OPEN_RETRY_SEC)
-                    continue
+                last_frame_ts = time.time()
 
             ok, frame = cap.read()
             if not ok or frame is None:
-                cap.release()
-                cap = None
-                time.sleep(OPEN_RETRY_SEC)
-                continue
+                break
 
             if width:
                 h = int(frame.shape[0] * (width / frame.shape[1]))
@@ -144,13 +139,11 @@ def _gen_ip(url: str, to_gray=False, width=None, stop_event=None):
             if not ok:
                 continue
 
-            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
-
-            if stop_event is not None and _client_ack_expired(stop_event):
-                break
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
     finally:
-        if cap is not None:
-            cap.release()
+        cap.release()
+        _release_stream_session(client_id, stop_token)
+
 
 @require_GET
 def camera_stream(request):
@@ -160,75 +153,65 @@ def camera_stream(request):
     /stream/?gray=1&width=640
     """
     url = request.GET.get("url") or _open_ip()
-    if not url:
-        return HttpResponse("No CAMERA_URL or ?url provided", status=400)
+    if not _is_url_allowed(url):
+        return HttpResponse("Invalid or missing camera URL", status=400)
 
     to_gray = request.GET.get("gray") in ("1", "true", "True")
     w = request.GET.get("width")
-    width = int(w) if (w and w.isdigit()) else None
+    try:
+        width = int(w) if w is not None else None
+    except (ValueError, TypeError):
+        width = None
+    if width is not None and width < 16:
+        width = 16
 
-    _signal_existing_stream_stop()
-
-    # 先測試一次連線，失敗回 503
-    if not STREAM_LOCK.acquire(timeout=LOCK_WAIT_SEC):
-        return HttpResponse("Camera stream still running, please close it before updating.", status=423)
-
-    stop_event = threading.Event()
-    client_from_request = request.GET.get("client")
-    client_id = client_from_request or uuid.uuid4().hex
-
-    test = _open_capture_with_retry(url, OPEN_TEST_TIMEOUT)
-    if test is None:
-        STREAM_LOCK.release()
-        return HttpResponse(f"Cannot open camera URL: {url}", status=503)
-    test.release()
-
-    _register_stream(stop_event, client_id, require_ack=bool(client_from_request))
-    if client_from_request:
-        _touch_client_ack(client_id)
-
-    def stream_with_lock():
-        try:
-            yield from _gen_ip(url, to_gray=to_gray, width=width, stop_event=stop_event)
-        finally:
-            _clear_stream(stop_event)
-            STREAM_LOCK.release()
+    client_id = request.GET.get("client")
+    stop_token = _register_stream_session(client_id)
 
     response = StreamingHttpResponse(
-        stream_with_lock(),
-        content_type="multipart/x-mixed-replace; boundary=frame"
+        _iter_stream(
+            request,
+            url,
+            to_gray=to_gray,
+            width=width,
+            client_id=client_id,
+            stop_token=stop_token,
+        ),
+        content_type="multipart/x-mixed-replace; boundary=frame",
     )
-    response["X-Stream-Client"] = client_id
+    response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
     return response
+
+
+@require_GET
+def stream_proof(request):
+    """
+    提供由後端簽章的資料，證明串流來源是由 Django 進行連線。
+    """
+    url = request.GET.get("url") or _open_ip()
+    if not _is_url_allowed(url):
+        return JsonResponse({"error": "Invalid or missing camera URL"}, status=400)
+
+    parsed = urlparse(url)
+    proof_payload = {
+        "via_backend": True,
+        "client_id": request.GET.get("client"),
+        "request_id": uuid.uuid4().hex,
+        "server_time": timezone.now().isoformat(),
+        "camera_protocol": parsed.scheme,
+        "camera_host": parsed.hostname,
+        "camera_signature": hashlib.sha256(url.encode("utf-8")).hexdigest(),
+    }
+    return JsonResponse(proof_payload)
+
 
 @csrf_exempt
 @require_POST
-def camera_stream_control(request):
-    """
-    接收前端 heartbeat / stop 指令，避免串流在客戶端中斷時占用。
-    """
-    payload = {}
-    content_type = request.META.get("CONTENT_TYPE", "")
-    if content_type.startswith("application/json"):
-        try:
-            payload = json.loads(request.body.decode("utf-8") or "{}")
-        except json.JSONDecodeError:
-            payload = {}
-    elif request.POST:
-        payload = request.POST
-
-    action = (payload.get("action") or "ack").lower()
-    client_id = payload.get("client") or payload.get("client_id")
-
-    if action not in ("ack", "stop"):
-        return JsonResponse({"ok": False, "error": "Unsupported action"}, status=400)
+def abort_stream(request):
+    client_id = request.GET.get("client") or request.POST.get("client")
     if not client_id:
-        return JsonResponse({"ok": False, "error": "Missing client id"}, status=400)
-
-    if action == "ack":
-        touched = _touch_client_ack(client_id)
-        status = 200 if touched else 404
-        return JsonResponse({"ok": touched, "active": touched}, status=status)
-
-    stopped = _stop_stream_for_client(client_id)
-    return JsonResponse({"ok": True, "stopped": stopped})
+        return JsonResponse({"error": "missing client"}, status=400)
+    aborted = _abort_stream_session(client_id)
+    return JsonResponse({"aborted": aborted})

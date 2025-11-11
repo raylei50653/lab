@@ -1,7 +1,7 @@
 FROM python:3.12-slim AS runtime
 
-ARG DEBIAN_MIRROR=http://deb.debian.org/debian
-ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
+ARG DEBIAN_MIRROR=https://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=https://deb.debian.org/debian-security
 ARG DEBIAN_SUITE=trixie
 ARG DEBIAN_UPDATES_SUITE=trixie-updates
 ARG DEBIAN_SECURITY_SUITE=trixie-security
@@ -21,15 +21,18 @@ WORKDIR /app
 
 RUN mkdir -p /app/db
 
-RUN printf "deb ${DEBIAN_MIRROR} ${DEBIAN_SUITE} main\n" > /etc/apt/sources.list && \
-    printf "deb ${DEBIAN_MIRROR} ${DEBIAN_UPDATES_SUITE} main\n" >> /etc/apt/sources.list && \
-    printf "deb ${DEBIAN_SECURITY_MIRROR} ${DEBIAN_SECURITY_SUITE} main\n" >> /etc/apt/sources.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf "deb %s %s main\n" "${DEBIAN_MIRROR}" "${DEBIAN_SUITE}" > /etc/apt/sources.list; \
+    printf "deb %s %s main\n" "${DEBIAN_MIRROR}" "${DEBIAN_UPDATES_SUITE}" >> /etc/apt/sources.list; \
+    printf "deb %s %s main\n" "${DEBIAN_SECURITY_MIRROR}" "${DEBIAN_SECURITY_SUITE}" >> /etc/apt/sources.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        libgl1 \
+        libglib2.0-0; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip --root-user-action=ignore && \

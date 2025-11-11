@@ -10,37 +10,100 @@ function buildQuery(params) {
   return q.toString()
 }
 
+function createClientId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return Math.random().toString(36).slice(2)
+}
+
 const PRESETS = [
   { label: '（使用後端預設 CAMERA_URL）', value: '' },
   { label: 'MJPEG 測試源', value: 'http://demo.ivsbroker.com/mjpeg' }, // 換成你可用的
   { label: 'RTSP 範例（需後端轉 MJPEG）', value: 'rtsp://192.168.1.10:554/stream1' },
 ]
 
+const DISCONNECT_DELAY_MS = 500
+
 export default function Camera() {
   const [gray, setGray] = useState(false)
   const [width, setWidth] = useState(640)
   const [url, setUrl] = useState('')
   const [inputUrl, setInputUrl] = useState('')
-  const [paused, setPaused] = useState(false)
+  const [userPaused, setUserPaused] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
   const [status, setStatus] = useState('IDLE') // IDLE | CONNECTING | LIVE | ERROR
   const [hint, setHint] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
+  const [proof, setProof] = useState(null)
+  const [proofError, setProofError] = useState('')
+  const paused = userPaused || disconnecting
+  const clientId = useMemo(() => createClientId(), [])
 
   // 代理 or 直連
   const apiBase = import.meta.env.VITE_API_BASE_URL
     ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
     : '/api'
-  const controlUrl = `${apiBase}/stream/control/`
-  const clientIdRef = useRef(
-    (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`
-  )
-  const clientId = clientIdRef.current
 
   // 用 key 讓 <img> 在參數變動時確實重建
   const [reloadKey, setReloadKey] = useState(0)
-  const bump = () => setReloadKey(k => k + 1)
-  const isActive = status === 'LIVE' || status === 'CONNECTING'
+  const triggerReload = useCallback(() => {
+    setReloadKey(k => k + 1)
+  }, [])
+
+  const forceCloseImage = useCallback(() => {
+    const el = imgRef.current
+    if (el) {
+      el.src = ''
+      el.removeAttribute('src')
+    }
+  }, [])
+
+  const abortStreamOnServer = useCallback(() => {
+    if (!clientId) return Promise.resolve()
+    const abortUrl = `${apiBase}/stream/abort/?client=${encodeURIComponent(clientId)}`
+    return fetch(abortUrl, { method: 'POST' }).catch(() => {})
+  }, [apiBase, clientId])
+
+  useEffect(() => () => {
+    abortStreamOnServer()
+  }, [abortStreamOnServer])
+
+  const disconnectTimerRef = useRef(null)
+  const userPausedRef = useRef(userPaused)
+  useEffect(() => {
+    userPausedRef.current = userPaused
+  }, [userPaused])
+
+  const clearDisconnectTimer = useCallback(() => {
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current)
+      disconnectTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => {
+    clearDisconnectTimer()
+  }, [clearDisconnectTimer])
+
+  const closeStreamBeforeReconnect = useCallback((after) => {
+    clearDisconnectTimer()
+    forceCloseImage()
+    abortStreamOnServer()
+    setDisconnecting(true)
+    setStatus('IDLE')
+    setStatusMessage('')
+    disconnectTimerRef.current = setTimeout(() => {
+      disconnectTimerRef.current = null
+      setDisconnecting(false)
+      if (userPausedRef.current) {
+        return
+      }
+      setStatus('CONNECTING')
+      setStatusMessage('')
+      after?.()
+    }, DISCONNECT_DELAY_MS)
+  }, [abortStreamOnServer, clearDisconnectTimer, forceCloseImage])
 
   const src = useMemo(() => {
     if (paused) return ''
@@ -49,31 +112,11 @@ export default function Camera() {
       gray: gray ? 1 : undefined,
       width: w,
       url: url || undefined,
-      client: clientId,
+      client: clientId || undefined,
       t: reloadKey, // 破壞快取，確保重連
     })
     return `${apiBase}/stream/${q ? `?${q}` : ''}`
   }, [apiBase, gray, width, url, paused, reloadKey, clientId])
-
-  const sendControl = useCallback((action, opts = {}) => {
-    if (!clientId) return
-    const payload = JSON.stringify({ action, client: clientId })
-    if (opts.beacon && typeof navigator !== 'undefined' && navigator.sendBeacon) {
-      try {
-        const blob = new Blob([payload], { type: 'application/json' })
-        navigator.sendBeacon(controlUrl, blob)
-        return
-      } catch (err) {
-        // fall through to fetch
-      }
-    }
-    fetch(controlUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-      keepalive: true,
-    }).catch(() => {})
-  }, [clientId, controlUrl])
 
   // 輸入提示：URL 不是 http/rtsp
   useEffect(() => {
@@ -90,52 +133,73 @@ export default function Camera() {
   useEffect(() => {
     if (!src) return
     setStatus('CONNECTING')
-    const timer = setTimeout(() => {
-      // 太久沒 onload/onerror，提示可能卡連線
-      if (status === 'CONNECTING') setStatus('ERROR')
-    }, 8000)
-    return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setStatusMessage('')
   }, [src])
 
   useEffect(() => {
-    if (!isActive) return
-    const send = () => sendControl('ack')
-    send()
-    const timer = setInterval(send, 5000)
-    return () => clearInterval(timer)
-  }, [isActive, sendControl])
-
-  const prevActiveRef = useRef(false)
-  useEffect(() => {
-    if (prevActiveRef.current && !isActive) {
-      sendControl('stop')
+    if (status !== 'CONNECTING' || !src) return
+    const rafImpl = typeof window !== 'undefined' ? window.requestAnimationFrame : null
+    const cancelImpl = typeof window !== 'undefined' ? window.cancelAnimationFrame : null
+    if (!rafImpl || !cancelImpl) return
+    let raf = 0
+    const detectFirstFrame = () => {
+      const el = imgRef.current
+      if (el && el.naturalWidth > 0 && el.naturalHeight > 0) {
+        setStatus('LIVE')
+        setStatusMessage('')
+        return
+      }
+      raf = rafImpl(detectFirstFrame)
     }
-    prevActiveRef.current = isActive
-  }, [isActive, sendControl])
+    raf = rafImpl(detectFirstFrame)
+    return () => cancelImpl(raf)
+  }, [status, src])
 
   useEffect(() => {
-    const handleUnload = () => sendControl('stop', { beacon: true })
-    window.addEventListener('beforeunload', handleUnload)
+    if (paused) {
+      setProof(null)
+      setProofError('')
+      return
+    }
+    let aborted = false
+    const w = clamp(Number(width) || 0, 160, 1920)
+    const q = buildQuery({
+      gray: gray ? 1 : undefined,
+      width: w,
+      url: url || undefined,
+      client: clientId || undefined,
+    })
+    const proofUrl = `${apiBase}/stream/proof/${q ? `?${q}` : ''}`
+    setProof(null)
+    setProofError('')
+    fetch(proofUrl, { headers: { Accept: 'application/json' } })
+      .then((res) => {
+        if (!res.ok) throw new Error('PROOF_HTTP_ERROR')
+        return res.json()
+      })
+      .then((data) => {
+        if (!aborted) {
+          setProof(data)
+        }
+      })
+      .catch(() => {
+        if (!aborted) {
+          setProofError('無法取得後端證明，請稍後再試')
+        }
+      })
     return () => {
-      window.removeEventListener('beforeunload', handleUnload)
-      sendControl('stop')
+      aborted = true
     }
-  }, [sendControl])
+  }, [apiBase, gray, width, url, reloadKey, paused, clientId])
+
 
   const handleApplySource = () => {
     const next = inputUrl.trim()
-    if (isActive) {
-      const ok = window.confirm('更新前請確認舊的 IP camera 已關閉，確定要切換嗎？')
-      if (!ok) return
-    }
-    setPaused(true)
-    setStatus('IDLE')
     setUrl(next)
-    setTimeout(() => {
-      setPaused(false)
-      bump()
-    }, 500)
+    setStatus('IDLE')
+    setStatusMessage('')
+    setUserPaused(false)
+    closeStreamBeforeReconnect(() => triggerReload())
   }
 
   return (
@@ -167,7 +231,6 @@ export default function Camera() {
           <button type="button" onClick={handleApplySource}>
             套用來源
           </button>
-          <small style={{ color: '#555' }}>更新前請先確認舊的 IP camera 已關閉</small>
         </div>
 
         <label>
@@ -175,43 +238,75 @@ export default function Camera() {
           <input
             type="number" min={160} max={1920} step={10}
             value={width}
-            onChange={(e) => setWidth(clamp(Number(e.target.value) || 0, 160, 1920))}
+            onChange={(e) => {
+              setStatusMessage('')
+              setWidth(clamp(Number(e.target.value) || 0, 160, 1920))
+              if (!userPaused) {
+                closeStreamBeforeReconnect(() => triggerReload())
+              }
+            }}
           />
         </label>
 
         <label>
-          <input type="checkbox" checked={gray} onChange={(e) => setGray(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={gray}
+            onChange={(e) => {
+              setStatusMessage('')
+              setGray(e.target.checked)
+              if (!userPaused) {
+                closeStreamBeforeReconnect(() => triggerReload())
+              }
+            }}
+          />
           轉灰階（gray=1）
         </label>
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button onClick={() => setPaused(p => !p)}>
-            {paused ? 'Resume' : 'Pause'}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (userPaused) {
+                setUserPaused(false)
+                closeStreamBeforeReconnect(() => triggerReload())
+              } else {
+                abortStreamOnServer()
+                forceCloseImage()
+                clearDisconnectTimer()
+                setDisconnecting(false)
+                setUserPaused(true)
+                setStatus('IDLE')
+                setStatusMessage('')
+              }
+            }}
+          >
+            {userPaused ? 'Resume' : 'Pause'}
           </button>
 
           <button
+            type="button"
             onClick={() => {
-              // 先卸載 <img> 關閉舊連線
-              setPaused(true)
-              setStatus('IDLE')
-              // 等 500ms 再重建，避免瀏覽器重用舊 TCP
-              setTimeout(() => {
-                setPaused(false)
-                setReloadKey(k => k + 1) // 觸發新 src 與新 <img> 節點
-              }, 500)
+              if (userPaused) return
+              closeStreamBeforeReconnect(() => triggerReload())
             }}
           >
             Reload
           </button>
 
-          <span style={{
-            color:
-              status === 'LIVE' ? 'green' :
-              status === 'CONNECTING' ? '#666' :
-              status === 'ERROR' ? 'crimson' : '#666'
-          }}>
-            {status}
-          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{
+              color:
+                status === 'LIVE' ? 'green' :
+                status === 'CONNECTING' ? '#666' :
+                status === 'ERROR' ? 'crimson' : '#666'
+            }}>
+              {status}
+            </span>
+            {statusMessage && (
+              <small style={{ color: '#c00' }}>{statusMessage}</small>
+            )}
+          </div>
         </div>
       </div>
 
@@ -225,16 +320,47 @@ export default function Camera() {
             style={{ maxWidth: '100%', border: '1px solid #ddd' }}
             onLoad={() => {
               setStatus('LIVE')
-              sendControl('ack')
+              setStatusMessage('')
             }}
             onError={(e) => {
               setStatus('ERROR')
-              sendControl('stop')
+              setStatusMessage('串流連線失敗（檢查 CAMERA_URL / url 參數 / 後端日誌）')
               e.currentTarget.alt = '串流連線失敗（檢查 CAMERA_URL / url 參數 / 後端日誌）'
             }}
           />
         ) : (
-          <p style={{ color: '#666' }}>串流已暫停</p>
+          <p style={{ color: '#666' }}>
+            {userPaused ? '串流已暫停' : disconnecting ? '釋放舊串流，準備重新連線…' : '串流暫停中'}
+          </p>
+        )}
+      </div>
+
+      <div style={{
+        marginTop: 12,
+        padding: 12,
+        border: '1px solid #ddd',
+        borderRadius: 4,
+        background: '#fafafa',
+        maxWidth: 720,
+      }}>
+        <strong>後端串流證明</strong>
+        {paused ? (
+          <p style={{ margin: '4px 0 0', color: '#666' }}>
+            串流暫停或重新連線中，暫無證明
+          </p>
+        ) : proof ? (
+          <div style={{ marginTop: 4, display: 'grid', gap: 2, fontSize: 14 }}>
+            <span>會話 ID：<code>{proof.client_id || clientId}</code></span>
+            <span>伺服器時間：{proof.server_time}</span>
+            <span>來源協定：{proof.camera_protocol || '未知'}</span>
+            <span>來源主機：{proof.camera_host || '未知'}</span>
+            <span>請求 ID：<code>{proof.request_id}</code></span>
+            <span>來源簽章：<code style={{ wordBreak: 'break-all' }}>{proof.camera_signature}</code></span>
+          </div>
+        ) : (
+          <p style={{ margin: '4px 0 0', color: proofError ? '#c00' : '#666' }}>
+            {proofError || '取得後端證明中…'}
+          </p>
         )}
       </div>
 

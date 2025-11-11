@@ -34,8 +34,20 @@ export default function DataTable({ items, onDelete, onUpdate }) {
       alert('請輸入內容')
       return
     }
-    await onUpdate(editingId, trimmed)
-    cancelEdit()
+    try {
+      await onUpdate(editingId, trimmed)
+      cancelEdit()
+    } catch (err) {
+      console.error('Update failed', err)
+    }
+  }
+
+  const handleDelete = async (id) => {
+    try {
+      await onDelete(id)
+    } catch (err) {
+      console.error('Delete failed', err)
+    }
   }
 
   const sortedItems = useMemo(() => {
@@ -112,7 +124,7 @@ export default function DataTable({ items, onDelete, onUpdate }) {
               ) : (
                 <>
                   <button onClick={() => startEdit(it)}>Edit</button>
-                  <button onClick={() => onDelete(it.id)}>Delete</button>
+                  <button onClick={() => handleDelete(it.id)}>Delete</button>
                 </>
               )}
             </td>

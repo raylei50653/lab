@@ -24,19 +24,17 @@ Base URL: `http://localhost:8000/`
 
 ### 攝影機串流 (`camera` app)
 
-- `GET /stream/` 以 `multipart/x-mixed-replace` 方式持續回傳 JPEG 幀，可直接嵌入 `<img src="/stream/">`.
-- `POST /stream/control/` 前端可傳送 `{"action":"ack|stop","client":"<id>"}` 心跳 / 釋放串流，避免瀏覽器中斷時攝影機佔用。
+- `GET /stream/` 以 `multipart/x-mixed-replace` 方式持續回傳 JPEG 幀，可直接嵌入 `<img src="/stream/">` 或在新分頁開啟。
+- 串流邏輯僅在建立連線時開啟一次來源，若讀取失敗會直接結束串流連線。
 - 參數：
   - `url`: 直接指定攝影機來源 (`http://...` MJPEG、`rtsp://...`)；若未設定會使用環境變數 `CAMERA_URL`.
   - `gray`: 設為 `1/true` 會先轉成灰階。
   - `width`: 指定輸出寬度 (px)，高度會等比例縮放。
-- 失敗時回傳 `400` (缺少來源) 或 `503` (無法連線來源)。
+- 失敗時若來源無效會回傳 `400`，其他錯誤則會在串流中斷時由客戶端自行重試。
 
 ### 常用環境變數
 
 | 變數 | 用途 | 預設 |
 |------|------|------|
 | `CAMERA_URL` | 攝影機串流預設來源 | – |
-| `CAM_OPEN_RETRY` | 連線失敗時的重試秒數 | `2` |
 | `CAM_FRAME_INTERVAL` | 每幀間隔秒數，>0 可節流 | `0` |
-| `CAM_CLIENT_ACK_TIMEOUT` | 要求前端 heartbeat 的逾時秒數 (<=0 代表停用) | `15` |
