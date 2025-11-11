@@ -3,11 +3,28 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org/debian}
+        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}
+        DEBIAN_SUITE: ${DEBIAN_SUITE:-trixie}
+        DEBIAN_UPDATES_SUITE: ${DEBIAN_UPDATES_SUITE:-trixie-updates}
+        DEBIAN_SECURITY_SUITE: ${DEBIAN_SECURITY_SUITE:-trixie-security}
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,backend}
       CAMERA_URL: ${CAMERA_URL:-}
       DJANGO_DB_PATH: ${DJANGO_DB_PATH:-/app/db/db.sqlite3}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-secret}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -21,7 +38,8 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-4173}:80"
     restart: unless-stopped

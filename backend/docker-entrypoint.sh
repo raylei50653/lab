@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -e
 
-python manage.py migrate --noinput
+if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+    python manage.py migrate --noinput
+fi
 
 exec "$@"
