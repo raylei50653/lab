@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,backend}
+      CAMERA_URL: ${CAMERA_URL:-}
+      DJANGO_DB_PATH: ${DJANGO_DB_PATH:-/app/db/db.sqlite3}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend-db-data:/app/db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8000}}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-4173}:80"
+    restart: unless-stopped
+
+volumes:
+  backend-db-data:
