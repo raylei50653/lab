@@ -6,7 +6,10 @@ from corsheaders.defaults import default_headers, default_methods
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = 'django-insecure-q$0=ipd7&@ya^tm148l$y=^n2+17*vg!w-nmr_!6b@(4om$)j6'
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    # Fallback keeps local開發可用，正式部署請在環境變數設定 DJANGO_SECRET_KEY
+    SECRET_KEY = 'django-insecure-dev-placeholder'
 
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
