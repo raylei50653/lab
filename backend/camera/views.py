@@ -1,16 +1,25 @@
 # camera/views.py
-import os, time, threading
+import json
+import os
+import threading
+import time
+import uuid
 import cv2
-from django.http import StreamingHttpResponse, HttpResponse
-from django.views.decorators.http import require_GET
+from django.http import StreamingHttpResponse, HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_POST
 
 OPEN_RETRY_SEC = float(os.getenv("CAM_OPEN_RETRY", "2"))
 FRAME_INTERVAL = float(os.getenv("CAM_FRAME_INTERVAL", "0"))  # 例：0.05 ≈ 20fps
 STREAM_LOCK = threading.Lock()  # 確保同一時間只會有一個攝影機串流
 STREAM_STATE_LOCK = threading.Lock()
 CURRENT_STOP_EVENT = None
+CURRENT_CLIENT_ID = None
+CLIENT_LAST_ACK_AT = 0.0
+CURRENT_CLIENT_REQUIRES_ACK = False
 LOCK_WAIT_SEC = float(os.getenv("CAM_STREAM_LOCK_WAIT", "5"))
 OPEN_TEST_TIMEOUT = float(os.getenv("CAM_OPEN_TEST_TIMEOUT", "8"))
+CLIENT_ACK_TIMEOUT = float(os.getenv("CAM_CLIENT_ACK_TIMEOUT", "15"))  # 設 0 停用
 
 def _open_ip():
     """
@@ -47,21 +56,54 @@ def _open_capture_with_retry(url: str, timeout: float):
         time.sleep(min(OPEN_RETRY_SEC, max(remaining, 0)))
 
 def _signal_existing_stream_stop():
-    global CURRENT_STOP_EVENT
+    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT
     with STREAM_STATE_LOCK:
         if CURRENT_STOP_EVENT is not None:
             CURRENT_STOP_EVENT.set()
 
-def _register_stream_stop_event(stop_event: threading.Event):
-    global CURRENT_STOP_EVENT
+def _register_stream(stop_event: threading.Event, client_id: str, require_ack: bool):
+    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT, CURRENT_CLIENT_REQUIRES_ACK
     with STREAM_STATE_LOCK:
         CURRENT_STOP_EVENT = stop_event
+        CURRENT_CLIENT_ID = client_id
+        CLIENT_LAST_ACK_AT = time.time()
+        CURRENT_CLIENT_REQUIRES_ACK = require_ack
 
-def _clear_stream_stop_event(stop_event: threading.Event):
-    global CURRENT_STOP_EVENT
+def _clear_stream(stop_event: threading.Event):
+    global CURRENT_STOP_EVENT, CURRENT_CLIENT_ID, CLIENT_LAST_ACK_AT, CURRENT_CLIENT_REQUIRES_ACK
     with STREAM_STATE_LOCK:
         if CURRENT_STOP_EVENT is stop_event:
             CURRENT_STOP_EVENT = None
+            CURRENT_CLIENT_ID = None
+            CLIENT_LAST_ACK_AT = 0.0
+            CURRENT_CLIENT_REQUIRES_ACK = False
+
+def _touch_client_ack(client_id: str):
+    global CLIENT_LAST_ACK_AT
+    with STREAM_STATE_LOCK:
+        if not (CURRENT_CLIENT_ID and client_id == CURRENT_CLIENT_ID):
+            return False
+        CLIENT_LAST_ACK_AT = time.time()
+        return True
+
+def _stop_stream_for_client(client_id: str | None):
+    with STREAM_STATE_LOCK:
+        if CURRENT_STOP_EVENT is None:
+            return False
+        if CURRENT_CLIENT_ID and client_id and client_id != CURRENT_CLIENT_ID:
+            return False
+        CURRENT_STOP_EVENT.set()
+        return True
+
+def _client_ack_expired(stop_event: threading.Event):
+    if CLIENT_ACK_TIMEOUT <= 0:
+        return False
+    with STREAM_STATE_LOCK:
+        if stop_event is not CURRENT_STOP_EVENT:
+            return False
+        if not CURRENT_CLIENT_ID or not CURRENT_CLIENT_REQUIRES_ACK:
+            return False
+        return (time.time() - CLIENT_LAST_ACK_AT) > CLIENT_ACK_TIMEOUT
 
 def _gen_ip(url: str, to_gray=False, width=None, stop_event=None):
     cap = None
@@ -103,6 +145,9 @@ def _gen_ip(url: str, to_gray=False, width=None, stop_event=None):
                 continue
 
             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
+
+            if stop_event is not None and _client_ack_expired(stop_event):
+                break
     finally:
         if cap is not None:
             cap.release()
@@ -128,24 +173,62 @@ def camera_stream(request):
     if not STREAM_LOCK.acquire(timeout=LOCK_WAIT_SEC):
         return HttpResponse("Camera stream still running, please close it before updating.", status=423)
 
+    stop_event = threading.Event()
+    client_from_request = request.GET.get("client")
+    client_id = client_from_request or uuid.uuid4().hex
+
     test = _open_capture_with_retry(url, OPEN_TEST_TIMEOUT)
     if test is None:
-        _clear_stream_stop_event(stop_event)
         STREAM_LOCK.release()
         return HttpResponse(f"Cannot open camera URL: {url}", status=503)
     test.release()
 
-    stop_event = threading.Event()
-    _register_stream_stop_event(stop_event)
+    _register_stream(stop_event, client_id, require_ack=bool(client_from_request))
+    if client_from_request:
+        _touch_client_ack(client_id)
 
     def stream_with_lock():
         try:
             yield from _gen_ip(url, to_gray=to_gray, width=width, stop_event=stop_event)
         finally:
-            _clear_stream_stop_event(stop_event)
+            _clear_stream(stop_event)
             STREAM_LOCK.release()
 
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         stream_with_lock(),
         content_type="multipart/x-mixed-replace; boundary=frame"
     )
+    response["X-Stream-Client"] = client_id
+    return response
+
+@csrf_exempt
+@require_POST
+def camera_stream_control(request):
+    """
+    接收前端 heartbeat / stop 指令，避免串流在客戶端中斷時占用。
+    """
+    payload = {}
+    content_type = request.META.get("CONTENT_TYPE", "")
+    if content_type.startswith("application/json"):
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+    elif request.POST:
+        payload = request.POST
+
+    action = (payload.get("action") or "ack").lower()
+    client_id = payload.get("client") or payload.get("client_id")
+
+    if action not in ("ack", "stop"):
+        return JsonResponse({"ok": False, "error": "Unsupported action"}, status=400)
+    if not client_id:
+        return JsonResponse({"ok": False, "error": "Missing client id"}, status=400)
+
+    if action == "ack":
+        touched = _touch_client_ack(client_id)
+        status = 200 if touched else 404
+        return JsonResponse({"ok": touched, "active": touched}, status=status)
+
+    stopped = _stop_stream_for_client(client_id)
+    return JsonResponse({"ok": True, "stopped": stopped})
