@@ -52,7 +52,7 @@ backend/
 
 | Method & Path | 描述 | 請求 body | 回應 |
 |---------------|------|-----------|------|
-| `GET /data/` | 取得所有資料 | – | `200 OK` + 陣列 |
+| `GET /data/` | 取得所有資料（支援 `?search=` 關鍵字） | – | `200 OK` + 陣列 |
 | `POST /data/` | 建立資料 | `{ "text": "hello" }` | `201 Created` + 新物件 |
 | `GET /data/<id>/` | 取得單筆 | – | `200 OK` + 物件 |
 | `PUT /data/<id>/`, `PATCH /data/<id>/` | 更新單筆 | `{ "text": "new" }` | `200 OK` + 更新後物件 |
@@ -60,6 +60,7 @@ backend/
 
 行為重點：
 - Body 最大 256 KB，必須是合法 JSON 並包含 `text` 字串。
+- `GET /data/` 可接受 `?search=` keyword，會以 `text__icontains` 篩選資料（忽略大小寫，空字串視為未篩選）。
 - 失敗時回傳 `{"error": "message"}` 與對應 HTTP 狀態碼。
 - `@csrf_exempt` 已套用在 API 層，前端仍需先呼叫 `/healthz/` 以取得 CSRF cookie。
 
