@@ -13,10 +13,14 @@ const sortOptions = [
   { value: 'id_asc', label: 'ID 小 → 大' },
 ]
 
+const PER_PAGE_OPTIONS = [5, 10, 20, 50]
+
 export default function DataTable({ items, onDelete, onUpdate }) {
   const [editingId, setEditingId] = useState(null)
   const [draft, setDraft] = useState('')
   const [sortOption, setSortOption] = useState('updated_desc')
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(10)
 
   const startEdit = (item) => {
     setEditingId(item.id)
@@ -51,7 +55,7 @@ export default function DataTable({ items, onDelete, onUpdate }) {
   }
 
   const sortedItems = useMemo(() => {
-    const next = [...items]
+    const next = [...(items ?? [])]
     switch (sortOption) {
       case 'updated_asc':
         next.sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at))
@@ -69,10 +73,42 @@ export default function DataTable({ items, onDelete, onUpdate }) {
     }
     return next
   }, [items, sortOption])
+  const totalPages = sortedItems.length
+    ? Math.max(1, Math.ceil(sortedItems.length / perPage))
+    : 1
+  const currentPage = Math.min(page, totalPages)
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * perPage
+    return sortedItems.slice(start, start + perPage)
+  }, [sortedItems, currentPage, perPage])
+
+  const handlePerPageChange = (value) => {
+    const parsed = Number(value) || 1
+    setPerPage(parsed)
+    setPage(1)
+  }
+
+  const shiftPage = (delta) => {
+    setPage((prev) => {
+      const next = prev + delta
+      if (next < 1) return 1
+      if (next > totalPages) return totalPages
+      return next
+    })
+  }
 
   return (
     <>
-      <div style={{ marginTop: 12, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div
+        style={{
+          marginTop: 12,
+          marginBottom: 8,
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
         <label htmlFor="data-sort">排序</label>
         <select
           id="data-sort"
@@ -86,6 +122,33 @@ export default function DataTable({ items, onDelete, onUpdate }) {
             </option>
           ))}
         </select>
+        <label htmlFor="per-page-select">每頁上限</label>
+        <select
+          id="per-page-select"
+          value={perPage}
+          onChange={(e) => handlePerPageChange(e.target.value)}
+          style={{ padding: 6 }}
+        >
+          {PER_PAGE_OPTIONS.map((limit) => (
+            <option key={limit} value={limit}>
+              {limit} 筆
+            </option>
+          ))}
+        </select>
+        <span style={{ fontSize: 13, color: '#666' }}>
+          第 {currentPage} / {totalPages} 頁
+        </span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => shiftPage(-1)} disabled={currentPage === 1}>
+            上一頁
+          </button>
+          <button
+            onClick={() => shiftPage(1)}
+            disabled={currentPage === totalPages || totalPages === 0}
+          >
+            下一頁
+          </button>
+        </div>
       </div>
       <table border="1" cellPadding="8" style={{ width: '100%' }}>
         <thead>
@@ -98,7 +161,7 @@ export default function DataTable({ items, onDelete, onUpdate }) {
           </tr>
         </thead>
         <tbody>
-        {sortedItems.map((it) => (
+        {paginatedItems.map((it) => (
           <tr key={it.id}>
             <td>{it.id}</td>
             <td>
