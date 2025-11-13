@@ -19,8 +19,6 @@ function createClientId() {
 
 const PRESETS = [
   { label: '（使用後端預設 CAMERA_URL）', value: '' },
-  { label: 'MJPEG 測試源', value: 'http://demo.ivsbroker.com/mjpeg' }, // 換成你可用的
-  { label: 'RTSP 範例（需後端轉 MJPEG）', value: 'rtsp://192.168.1.10:554/stream1' },
 ]
 
 const DISCONNECT_DELAY_MS = 500
@@ -30,7 +28,7 @@ export default function Camera() {
   const [width, setWidth] = useState(640)
   const [url, setUrl] = useState('')
   const [inputUrl, setInputUrl] = useState('')
-  const [userPaused, setUserPaused] = useState(false)
+  const [userPaused, setUserPaused] = useState(true)
   const [disconnecting, setDisconnecting] = useState(false)
   const [status, setStatus] = useState('IDLE') // IDLE | CONNECTING | LIVE | ERROR
   const [hint, setHint] = useState('')
