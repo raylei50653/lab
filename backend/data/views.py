@@ -45,7 +45,11 @@ def data_collection(request):
         return _options_ok()
 
     if request.method == "GET":
-        items = list(Data.objects.values("id", "text", "created_at", "updated_at"))
+        keyword = (request.GET.get("search") or "").strip()
+        queryset = Data.objects.all()
+        if keyword:
+            queryset = queryset.filter(text__icontains=keyword)
+        items = list(queryset.values("id", "text", "created_at", "updated_at"))
         return JsonResponse(items, safe=False, status=200)
 
     if request.method == "POST":
