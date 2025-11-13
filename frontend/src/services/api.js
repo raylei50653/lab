@@ -4,7 +4,12 @@ export const api = {
   health: () => get('/healthz/'),
 
   // /data/ CRUD
-  listData: () => get('/data/'),
+  listData: (search) => {
+    const query = typeof search === 'string' && search.trim() !== ''
+      ? `?search=${encodeURIComponent(search.trim())}`
+      : ''
+    return get(`/data/${query}`)
+  },
   getData: (id) => get(`/data/${id}/`),
   createData: (text) => post('/data/', { json: { text } }),
   updateData: (id, text) => put(`/data/${id}/`, { json: { text } }),

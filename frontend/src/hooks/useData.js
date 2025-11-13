@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 
 export function useData(autoLoad = true) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const lastQueryRef = useRef('')
 
   const runMutation = useCallback(async (fn, fallbackMessage = 'Operation failed') => {
     try {
@@ -16,11 +17,16 @@ export function useData(autoLoad = true) {
     }
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (searchTerm) => {
+    const normalized = typeof searchTerm === 'string' ? searchTerm.trim() : undefined
+    const effectiveQuery = normalized !== undefined ? normalized : lastQueryRef.current
+    if (normalized !== undefined) {
+      lastQueryRef.current = effectiveQuery
+    }
     try {
       setLoading(true)
       setError('')
-      const data = await api.listData()
+      const data = await api.listData(effectiveQuery)
       setItems(Array.isArray(data) ? data : [])
     } catch (e) {
       setError(e?.message || 'Load failed')
