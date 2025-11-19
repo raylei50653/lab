@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'data',
     'camera',
 
+    'rest_framework',
     'corsheaders',
 ]
 
