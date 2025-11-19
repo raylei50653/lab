@@ -45,7 +45,7 @@ React 19 + Vite 前端與 Django 5 + OpenCV 後端的全端示範，涵蓋健康
 
 ## 推薦工作流
 1. 開兩個終端：A 執行後端 `runserver`，B 執行 `npm run dev`。
-2. Health 頁面應回傳 `{"ok": true}` 並帶入 CSRF Cookie。
+2. Health 頁面應回傳 `{"ok": true}`。
 3. Data CRUD 頁示範 `useData` + `api.js`，每次操作都會重新抓取列表，可同步觀察後端 log。
 4. Camera 頁控制 `url / gray / width`，留空 `url` 時使用 `CAMERA_URL`；按下 Reload/Resume 會觸發 `/stream/abort/` 保證只有一條串流。
 5. 修改程式時請同步檢查 ESLint (`npm run lint`) 與 Django 測試 (`python manage.py test`)，避免跨端破口。
@@ -79,9 +79,7 @@ React 19 + Vite 前端與 Django 5 + OpenCV 後端的全端示範，涵蓋健康
 | `DJANGO_SECRET_KEY` | SECRET_KEY，正式環境務必覆寫 | `django-insecure-dev-placeholder` (本地) |
 | `DJANGO_DEBUG` | `True/False` | `False` |
 | `DJANGO_ALLOWED_HOSTS` | 逗號分隔 host 白名單 | 空字串 (僅限本機) |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | `scheme://host:port` 列表 | `http://localhost:5173,http://127.0.0.1:5173` |
 | `DJANGO_DB_PATH` | SQLite 路徑，可覆寫為 volume | `<backend>/db.sqlite3` |
-| `CORS_ALLOW_*` | 已在 `settings.py` 預設全開，部署時可再收斂 | – |
 
 ### Camera 相關
 | 變數 | 用途 | 舉例 |
@@ -97,8 +95,8 @@ React 19 + Vite 前端與 Django 5 + OpenCV 後端的全端示範，涵蓋健康
 ## API 與 UI 對應
 | 頁面 | 主要端點 | 備註 |
 |------|-----------|------|
-| Health | `GET /healthz/` | 取得 `{"ok": true}` 並刷新 CSRF cookie |
-| Data CRUD | `GET/POST /data/`, `PUT/PATCH/DELETE /data/<id>/` | Body 限制 256 KB，`text` 必須是字串 |
+| Health | `GET /healthz/` | 取得 `{"ok": true}` |
+| Data CRUD | `GET/POST /data/`, `PUT/PATCH/DELETE /data/<id>/` | `text` 會自動 trim，最大 1024 字元 |
 | Camera | `GET /stream/` (MJPEG), `GET /stream/proof/`, `POST /stream/abort/` | 支援 `client`, `gray`, `width`, `url` 參數，客製化 UI 能直接重用這些 API |
 
 詳細 payload、錯誤碼與測試方式請閱讀 `backend/README.md`；React 組件拆解與程式碼結構則記錄在 `frontend/README.md`。
@@ -117,7 +115,7 @@ React 19 + Vite 前端與 Django 5 + OpenCV 後端的全端示範，涵蓋健康
 
 ## Troubleshooting (常見情境)
 - `Cannot open camera URL`：確定 `CAMERA_URL` 或 `?url=` 可由後端所在主機連線，必要時在容器內 `curl` / `ffprobe` 測試。
-- 前端顯示 `Request timeout`：代表 `fetcher` 遭 10 秒超時，請檢查 `VITE_API_BASE_URL`、Django 是否啟動、以及瀏覽器是否取得 CSRF。
+- 前端顯示 `Request timeout`：代表 `fetcher` 遭 10 秒超時，請檢查 `VITE_API_BASE_URL` 與 Django 是否啟動。
 - 串流卡在 `CONNECTING`：檢查瀏覽器 console 是否被 ad-block 阻擋，或 camera 來源無法轉 MJPEG；可在新分頁直接開 `/stream/?client=foo` 驗證。
 - Docker backend 長期 `starting`：`docker compose logs backend` 通常會顯示 migrations 失敗、SECRET_KEY 未設或 SQLite 權限不足，修正後重啟即可。
 - 需重置資料：`docker compose down -v backend-db-data` (會刪掉 SQLite)，或本機刪除 `backend/db.sqlite3` 後再次 `migrate`。

@@ -14,18 +14,6 @@ if not SECRET_KEY:
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
 
-# 允許前端開發代理與部署來源通過 CSRF 檢查
-default_csrf_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-extra_csrf_origins = [
-    origin.strip()
-    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
-    if origin.strip()
-]
-CSRF_TRUSTED_ORIGINS = default_csrf_origins + extra_csrf_origins
-
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -47,7 +35,6 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -95,6 +82,6 @@ USE_TZ = True
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = True  # 測試階段可全開，正式再改白名單
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_HEADERS = list(default_headers) + ["content-type"]
 CORS_ALLOW_METHODS = list(default_methods)  # 包含 GET, POST, PUT, PATCH, DELETE, OPTIONS

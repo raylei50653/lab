@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.urls import reverse
+from rest_framework.test import APITestCase
 
 from .models import Data
 
@@ -30,3 +31,57 @@ class DataCollectionTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         payload = resp.json()
         self.assertEqual(len(payload), 3)
+
+
+class DataMutationApiTests(APITestCase):
+    def test_create_data_trims_payload(self):
+        resp = self.client.post(
+            reverse("data-collection"),
+            {"text": "  hello world  "},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        payload = resp.json()
+        self.assertEqual(payload["text"], "hello world")
+        self.assertTrue(Data.objects.filter(id=payload["id"], text="hello world").exists())
+
+    def test_create_data_requires_text(self):
+        resp = self.client.post(reverse("data-collection"), {}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("text", resp.json())
+
+    def test_create_data_rejects_blank_text(self):
+        resp = self.client.post(
+            reverse("data-collection"),
+            {"text": "   "},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("text", resp.json())
+
+    def test_update_data_replaces_existing_value(self):
+        item = Data.objects.create(text="original")
+        resp = self.client.put(
+            reverse("data-detail", args=[item.id]),
+            {"text": "updated"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.text, "updated")
+
+    def test_update_data_rejects_blank_text(self):
+        item = Data.objects.create(text="original")
+        resp = self.client.put(
+            reverse("data-detail", args=[item.id]),
+            {"text": "  "},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("text", resp.json())
+
+    def test_delete_data_removes_record(self):
+        item = Data.objects.create(text="to delete")
+        resp = self.client.delete(reverse("data-detail", args=[item.id]))
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(Data.objects.filter(id=item.id).exists())

@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 import cv2
 from django.http import StreamingHttpResponse, HttpResponse, JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 FRAME_INTERVAL = float(os.getenv("CAM_FRAME_INTERVAL", "0"))  # 例：0.05 ≈ 20fps
@@ -170,8 +169,8 @@ def camera_stream(request):
 
     response = StreamingHttpResponse(
         _iter_stream(
-            request,
-            url,
+            request=request,
+            url=url,
             to_gray=to_gray,
             width=width,
             client_id=client_id,
@@ -207,7 +206,6 @@ def stream_proof(request):
     return JsonResponse(proof_payload)
 
 
-@csrf_exempt
 @require_POST
 def abort_stream(request):
     client_id = request.GET.get("client") or request.POST.get("client")

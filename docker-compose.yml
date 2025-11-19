@@ -15,7 +15,6 @@ services:
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,backend}
-      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
       CAMERA_URL: ${CAMERA_URL:-}
       DJANGO_DB_PATH: ${DJANGO_DB_PATH:-/app/db/db.sqlite3}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-secret}

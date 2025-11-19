@@ -1,6 +1,19 @@
 # Frontend (React + Vite)
 
-本資料夾包含使用 React 19、Vite、Tailwind、React Router 打造的前端。介面提供三個分頁：Health、Data CRUD 與 Camera，分別演示 API ping、一般 REST CRUD 與 MJPEG 串流控制。以下內容面向開發者，協助你快速啟動、調整與部署。
+本資料夾包含使用 React 19、Vite、Tailwind、React Router 打造的前端。介面提供三個分頁：Health、Data CRUD 與 Camera，分別演示 API ping、一般 REST CRUD 與 MJPEG 串流控制。以下內容面向開發者，協助你快速啟動、調整與部署，並針對每個分頁的元件與資料流提供對照表。
+
+## 功能亮點
+- **Health**：即時顯示 `GET /healthz/` 結果並標示成功 / 失敗。
+- **Data CRUD**：`useData` hook 封裝 `GET/POST/PUT/PATCH/DELETE /data/`，同時提供搜尋/清除與錯誤處理。
+- **Camera**：以 `<img>` 播放 MJPEG，對應後端的 `client` / `gray` / `width` 參數並定期取得 `/stream/proof/` 簽章。
+- **統一 fetch 入口**：`src/lib/fetcher.js` 決定要走 Vite dev proxy (`/api`) 或建置時注入的 `VITE_API_BASE_URL`。
+
+## 頁面與元件對照
+| 分頁 / Route | 主要元件 | 文件位置 | 關聯後端 API | 備註 |
+|--------------|---------|----------|--------------|------|
+| `/` → Health | `components/HealthCheck` | `src/components/HealthCheck.jsx` | `GET /healthz/` | 自動輪詢與錯誤展示，供 smoke test。 |
+| `/data` | `pages/DataCrud`, `hooks/useData`, `components/DataForm`, `components/DataTable` | `src/pages/DataCrud.jsx` 等 | `GET/POST/PUT/PATCH/DELETE /data/` | `useData` 追蹤 loading/error，支援 `?search=` 關鍵字。 |
+| `/camera` | `pages/Camera` | `src/pages/Camera.jsx` | `GET /stream/`, `GET /stream/proof/`, `POST /stream/abort/` | 管理 Pause/Resume、Reload、灰階、寬度、來源 URL 與 Proof 顯示。 |
 
 ## 系統需求
 - Node.js 20+、npm 10+
@@ -41,9 +54,11 @@ src/
 - 其餘元件使用簡單 inline style，目的在於凸顯功能流程，可依需求換成更完整的設計系統。
 
 ### 路由與資料流
-- `App.jsx` 建立三個 Route 並顯示簡易分頁導覽。
-- `useData` hook 內建 `refresh/create/update/delete` 四個 async 方法，並於 `DataCrud` 中注入至 `DataForm`、`DataTable`。
-- Camera 頁面使用多個 `useState` + `useEffect` 控制串流停啟、灰階、寬度與後端證明，亦會呼叫 `/stream/abort/` 釋放舊連線。
+- `App.jsx` 建立三個 Route 並顯示簡易分頁導覽；每頁以 `<section>` 包裹對應元件，易於拆分。
+- `useData` hook 內建 `refresh/create/update/delete` 四個 async 方法與 `search` 支援，內部保存最後一次查詢，讓重新整理或刪除後可保持同一個篩選條件。
+- `DataForm` 只關心送出文字，`DataTable` 負責內嵌編輯和刪除；所有副作用由 hook 統一管理並以 toast-style 錯誤訊息呈現。
+- Camera 頁面維護 `status (IDLE/CONNECTING/LIVE/ERROR)`、`userPaused` 與 `disconnecting` 等旗標，並在參數變動時先呼叫 `/stream/abort/` 再換新串流，確保後端不會殘留 zombie connection。
+- Camera 也會以 `fetch(proof)` 取得簽章資料並顯示 `protocol/host/signature`，方便快速判斷實際串流來源。
 
 ## 與後端整合
 - `src/lib/fetcher.js` 決定 API Base：
@@ -73,8 +88,8 @@ npm run build
 
 ## Troubleshooting
 - **Request timeout**：後端未啟動或 `VITE_API_BASE_URL` 指向錯誤；請確認 `python manage.py runserver` 是否運行，或瀏覽器是否能打開 `/api/healthz/`。
-- **CORS/CSRF 錯誤**：部署到非 localhost 時，後端需同步設定 `DJANGO_ALLOWED_HOSTS` 與 `DJANGO_CSRF_TRUSTED_ORIGINS`，前端請重新建置以寫入正確 `VITE_API_BASE_URL`。
-- **串流畫面黑屏**：確定攝影機來源可被後端讀取，可在瀏覽器以新分頁開啟 `http(s)/rtsp` URL 或直接開 `/api/stream/?client=debug` 測試。
+- **CORS 錯誤**：部署到非 localhost 時，後端需同步設定 `DJANGO_ALLOWED_HOSTS`，前端請重新建置以寫入正確 `VITE_API_BASE_URL`。
+- **串流畫面黑屏**：確定攝影機來源可被後端讀取，可在瀏覽器以新分頁開啟 `http(s)/rtsp` URL 或直接開 `/api/stream/?client=debug` 測試；若 backend 跑在 VM，請參考 `backend/README.md` 中的 NAT vs Bridge 建議。
 - **Eslint 無法安裝**：若所在環境封鎖 npm registry，可在 `.npmrc` 設定私有鏡像或改由 docker 建置。
 
 更多設計細節與 API 說明請回到根目錄 README 以及 `backend/README.md`。
