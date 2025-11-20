@@ -185,27 +185,27 @@ flowchart LR
 #### Mermaid 圖：NAT vs Bridge
 ```mermaid
 flowchart LR
-    subgraph NAT["NAT（會失敗）"]
-        CAM_N["IP Camera\n192.168.x.x"]
-        VM_N["VM (NAT)\n10.0.2.x\nNAT 私網，無法直接到 Camera LAN"]
+    subgraph NAT["NAT（本環境 RTSP 失敗）"]
         HOST_N["Host"]
+        VM_N["VM (NAT)\n10.0.2.x\nNAT 私網，無法直接到 Camera LAN"]
+        CAM_N["IP Camera\n192.168.x.x"]
 
-        HOST_N --> VM_N
-        VM_N -. RTSP Request .-> CAM_N
-        CAM_N -. X 回傳失敗 .-> VM_N
+        HOST_N <-->|HTTP（Port Forward）| VM_N
+        VM_N -. "RTSP Request" .-> CAM_N
+        CAM_N -. "X 回傳失敗" .-> VM_N
     end
 ```
 
 ```mermaid
 flowchart LR
     subgraph BR["Bridge（本專案使用）"]
-        CAM_B["IP Camera\n192.168.x.x"]
-        VM_B["VM (Bridge)\n192.168.x.y"]
         HOST_B["Host\n192.168.x.z"]
+        VM_B["VM (Bridge)\n192.168.x.y"]
+        CAM_B["IP Camera\n192.168.x.x"]
 
-        HOST_B --> VM_B
-        VM_B --> CAM_B
-        CAM_B --> VM_B
+        HOST_B <-->|HTTP（LAN）| VM_B
+        VM_B -->|"RTSP / MJPEG 請求"| CAM_B
+        CAM_B -->|"回傳串流"| VM_B
     end
 ```
 
