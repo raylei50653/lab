@@ -262,10 +262,15 @@ docker compose ps
 - 前端建置結果由 nginx 提供；若需自訂 Vite API base，請於 `.env` 設定 `VITE_API_BASE_URL`。
 
 ### 6.1 Nginx 角色與設定
-- **用途**：`frontend` 容器僅扮演靜態檔案伺服器，將 `npm run build` 產物複製到 `/usr/share/nginx/html`，不做 API 反向代理。
-- **配置**：`frontend/nginx.conf` 使用 `root /usr/share/nginx/html; index index.html;` 並以 `try_files $uri /index.html` 處理 SPA Routing，確保 React Router 可直接 F5。
-- **網路行為**：瀏覽器依 `.env` 中的 `VITE_API_BASE_URL` 直接呼叫後端 `BACKEND_PORT`，若部署到不同網域僅需調整此環境變數或加上相應的 CORS 設定。
-- **可選最佳化**：如需啟用 gzip 或靜態資產快取，可在同一份 nginx.conf 增加 `gzip on;` 或 `location /assets { expires 7d; }` 等設定，不影響現有流程。
+- 用途：`frontend` 容器在部署階段僅扮演靜態檔案伺服器，負責提供 React build 產生的 HTML / JS / CSS。所有產物會在建置時複製到 `/usr/share/nginx/html`。此 Nginx 並未承擔後端 API 的反向代理，也不參與 Django 的請求流程。
+- 配置：`frontend/nginx.conf` 以 `root /usr/share/nginx/html; index index.html;` 進行基本靜態服務，並使用 `try_files $uri /index.html` 處理 SPA Routing。這確保 React Router 任何子路徑（如 `/data`、`/camera`）按 F5 時不會 404。
+- 網路行為：前端的 API 呼叫皆透過 `.env` 中的 `VITE_API_BASE_URL` 指向後端 `BACKEND_PORT`。這表示前端與後端在部署後是分別對外提供服務，由瀏覽器直接跨來源呼叫 Django。如部署到不同網域，只需調整該變數或在後端增補 CORS 設定。
+- 可選最佳化：若需提升正式環境效能，可在同一份 nginx.conf 中加入以下靜態內容優化，不會改變 React ↔ Django 的互動模式。
+```nginx
+gzip on;
+gzip_types text/javascript text/css application/json;
+location /assets { expires 7d; }
+```
 
 ---
 
