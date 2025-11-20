@@ -15,9 +15,9 @@
 ```mermaid
 flowchart TB
 
-    %% ==================================================
-    %% Frontend (Top)
-    %% ==================================================
+    %% ================================================
+    %% Frontend
+    %% ================================================
     subgraph FE["Frontend - React 19 + Vite"]
         direction TB
         FE1["Health Page"]
@@ -25,51 +25,55 @@ flowchart TB
         FE3["Camera Stream Page"]
     end
 
-    %% ==================================================
-    %% Backend (Middle)
-    %% ==================================================
+    %% ================================================
+    %% Backend
+    %% ================================================
     subgraph BE["Backend - Django 5"]
         direction TB
         BE1["healthz Endpoint"]
-        BE2["Data API - DRF Views"]
+        BE2["Data API：DRF Views"]
         BE3["Camera Stream Endpoint"]
         BE4["Stream Proof"]
         BE5["Stream Abort"]
     end
 
-    %% ==================================================
-    %% ORM Layer (Bottom Right)
-    %% ==================================================
+    %% ================================================
+    %% ORM
+    %% ================================================
     subgraph ORM["ORM Layer"]
         ORM1["Django ORM"]
     end
 
-    %% ==================================================
-    %% Database (Bottom Right)
-    %% ==================================================
+    %% ================================================
+    %% Database
+    %% ================================================
     subgraph DB["Database"]
-        DB1[(SQLite or PostgreSQL)]
+        DB1[(SQLite / PostgreSQL)]
     end
 
-    %% ==================================================
-    %% Camera Source (Bottom Left)
-    %% ==================================================
+    %% ================================================
+    %% Camera
+    %% ================================================
     subgraph CAM["Camera Source"]
-        CAM1["RTSP or HTTP MJPEG"]
+        CAM1["RTSP / HTTP MJPEG"]
     end
 
-    %% ==================================================
-    %% Main Top-to-Bottom Flow
-    %% ==================================================
-    FE -->|HTTP Fetch| BE
 
-    %% Backend → ORM → Database
-    BE -->|Model Query| ORM
-    ORM -->|SQL Query| DB
+    %% ================================================
+    %% Data Flow (Unified Style)
+    %% ================================================
 
-    %% Backend → Camera → Frontend
-    BE -->|OpenCV Capture| CAM
-    CAM -->|MJPEG Stream| FE
+    %% Frontend <--> Backend
+    FE <-->|HTTP Request：Response| BE
+
+    %% Backend <--> ORM <--> DB
+    BE <-->|Model Query：Result| ORM
+    ORM <-->|SQL Query：Rows| DB
+
+    %% Camera --> Backend --> Frontend
+    CAM -->|"Raw Stream：RTSP / MJPEG"| BE
+    BE -->|"MJPEG Stream"| FE
+
 
 ```
 
@@ -140,20 +144,20 @@ flowchart LR
 
 #### 網路架構圖
 ```mermaid
-flowchart TB
-    subgraph HOST["Windows Host\nVite Frontend :5173\nIP: 10.15.106.198"]
-    end
+flowchart LR
 
-    subgraph VM["Ubuntu VM\nDjango Backend :8000\nIP: 10.15.106.238"]
-    end
+    CAM["IP Camera<br/>RTSP / MJPEG<br/>IP：10.15.106.226"]
 
-    subgraph CAM["IP Camera\nRTSP / MJPEG\nIP: 10.15.106.226"]
-    end
+    VM["Ubuntu VM<br/>Django + OpenCV<br/>Backend：8000<br/>IP：10.15.106.238"]
 
-    HOST -->|Fetch API| VM
-    VM -->|OpenCV Capture| CAM
-    CAM -->|Frame Stream| VM
-    VM -->|MJPEG Stream| HOST
+    HOST["Windows Host<br/>Vite Frontend：5173<br/>IP：10.15.106.198"]
+
+    %% Camera → VM
+    CAM -->|"RTSP / MJPEG Raw Stream"| VM
+
+    %% VM → Host
+    VM <-->|"HTTP API：JSON / MJPEG Stream"| HOST
+
 ```
 
 ### 2.4 NAT 與 Bridge 模式比較（虛擬機網路模式）
@@ -163,15 +167,16 @@ flowchart TB
 |------|------------------|---------------------------|
 | VM 是否擁有真正的 LAN IP | 否，僅有 NAT 私有 IP | 是（如 `192.168.x.y`） |
 | Host → VM 連線 | 需設定 Port Forward | 直接以 LAN IP 存取 |
-| VM → IP Camera（RTSP/MJPEG） | 常因 NAT 阻擋而失敗 | 可直接連線 |
-| Camera → VM 回傳封包 | 多被 NAT 擋下 | LAN 直接溝通 |
+| VM → IP Camera（RTSP/MJPEG） | 在本環境中多數情況失敗（NAT 網段無法直達 Camera 所在 LAN） | 可直接連線 |
+| Camera → VM 回傳封包 | 在本環境中無法回到 VM 的 NAT 私網 IP | LAN 直接溝通 |
 | 是否適合作為影像串流代理 | 不適合，OpenCV 容易卡住 | 必須使用，確保雙向傳輸 |
 | 除錯難易度 | 封包穿過 NAT，難以追蹤 | 直接監看 LAN 流量 |
 | 建議使用情境 | 一般網頁 / API 測試 | 需存取 Camera / NAS / Printer 等 LAN 設備 |
 
-**NAT 模式為何不適合 RTSP / MJPEG？**
-- RTSP、MJPEG 都需要「後端請求 → Camera 回傳」的雙向連線。VM 使用 NAT 時，Camera 無法將回傳封包送至 NAT IP，導致 OpenCV `.isOpened()` 失敗或串流長期停在 CONNECTING。
-- 常見症狀：串流卡住、資料流中斷、`Cannot open camera URL`，即使重新整理也無法建立穩定連線。
+**NAT 模式在本實作環境中為何不適合 RTSP / MJPEG？**
+- RTSP、MJPEG 都需要「後端請求 → Camera 回傳」的雙向連線。在本專案實際的網路配置中，VM 使用 NAT 時，其私有 IP 所在網段無法直接與 Camera 所在的 LAN 溝通，回傳封包無法正確送回 VM，實務效果就像被 NAT 擋下，常見情況是 OpenCV `.isOpened()` 失敗或串流長期停在 CONNECTING。
+- 常見症狀：串流卡住、資料流中斷、`Cannot open camera URL` 等，即使重新整理也無法建立穩定連線。
+
 
 **Bridge 模式的優勢**
 - VM 成為 LAN 中的第一類設備，與 Host、Camera 共享同一個子網，雙向封包不再經過 NAT。
@@ -182,7 +187,7 @@ flowchart TB
 flowchart LR
     subgraph NAT["NAT（會失敗）"]
         CAM_N["IP Camera\n192.168.x.x"]
-        VM_N["VM (NAT)\n10.0.2.x"]
+        VM_N["VM (NAT)\n10.0.2.x\nNAT 私網，無法直接到 Camera LAN"]
         HOST_N["Host"]
 
         HOST_N --> VM_N
