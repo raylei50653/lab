@@ -217,7 +217,8 @@ flowchart LR
 | 前端 | React 19 + Vite | React Router 分頁、Tailwind UI、`useData` hook 管理 CRUD 與錯誤狀態。 |
 | 後端 | Django 5 | `data` app (REST CRUD)、`camera` app (OpenCV 串流代理)、`/healthz/` 健康檢查。 |
 | 串流 | OpenCV + MJPEG | 從 RTSP/MJPEG 來源擷取影像後以 `multipart/x-mixed-replace` 回傳，可調整灰階/寬度。 |
-| DevOps | Docker Compose、Makefile | `docker compose up -d` 即可啟動 gunicorn + nginx + 前端靜態資源。 |
+| DevOps | Docker Compose、Makefile | `docker compose up -d` 啟動 gunicorn + nginx + 前端靜態資源，支援 `.env` 切換埠號與 CAMERA_URL。 |
+| 開發工具 | uv、Node.js、Vite dev server | 本機開發時以 `uv venv` 建立後端虛擬環境，前端透過 `npm install && npm run dev` 啟動 Vite 開發伺服器，提供熱更新與快速迭代。 |
 
 ---
 
