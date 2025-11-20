@@ -261,6 +261,12 @@ docker compose ps
 - `backend` 服務會在啟動時依 `.env` 決定是否自動 `migrate` (`RUN_MIGRATIONS=true`)。
 - 前端建置結果由 nginx 提供；若需自訂 Vite API base，請於 `.env` 設定 `VITE_API_BASE_URL`。
 
+### 6.1 Nginx 角色與設定
+- **用途**：`frontend` 容器僅扮演靜態檔案伺服器，將 `npm run build` 產物複製到 `/usr/share/nginx/html`，不做 API 反向代理。
+- **配置**：`frontend/nginx.conf` 使用 `root /usr/share/nginx/html; index index.html;` 並以 `try_files $uri /index.html` 處理 SPA Routing，確保 React Router 可直接 F5。
+- **網路行為**：瀏覽器依 `.env` 中的 `VITE_API_BASE_URL` 直接呼叫後端 `BACKEND_PORT`，若部署到不同網域僅需調整此環境變數或加上相應的 CORS 設定。
+- **可選最佳化**：如需啟用 gzip 或靜態資產快取，可在同一份 nginx.conf 增加 `gzip on;` 或 `location /assets { expires 7d; }` 等設定，不影響現有流程。
+
 ---
 
 ## 7. 完整 API 清單
